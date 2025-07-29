@@ -1,0 +1,169 @@
+name: Playwright Tests
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test:
+    timeout-minutes: 60
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-node@v4
+      with:
+        node-version: lts/*
+    - name: Install dependencies
+      run: npm ci
+    - name: Install Playwright Browsers
+      run: npx playwright install --with-deps
+    - name: Run Playwright tests
+      run: npm run build && npm run start & npx playwright test
+      env:
+        # Assurez-vous que ces variables d'environnement sont configurées dans vos secrets GitHub
+        NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
+        NEXTAUTH_URL: ${{ secrets.NEXTAUTH_URL }}
+        DATABASE_URL: ${{ secrets.DATABASE_URL }} # Si votre base de données est accessible depuis CI
+        # Ajoutez d'autres variables d'environnement nécessaires à votre application Next.js
+        # par exemple, NEXT_PUBLIC_API_URL si elle est utilisée côté client
+        NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL || 'http://localhost:3000' }} # Utiliser vars pour les variables non secrètes
+    - uses: actions/upload-artifact@v4
+      if: ${{ !cancelled() }}
+      with:
+        name: playwright-report
+        path: playwright-report/
+        retention-days: 30
+
+  notify:
+    runs-on: ubuntu-latest
+    needs: test # Ce job dépend du job 'test'
+    if: ${{ always() }} # S'exécute toujours, quel que soit le résultat du job 'test'
+
+    steps:
+      # --- Slack Notifications ---
+      - name: Send Slack Success Notification
+        if: ${{ needs.test.result == 'success' }} # S'exécute uniquement si le job 'test' a réussi
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          payload: |
+            {
+              "text": ":white_check_mark: Build Succeeded: ${{ github.workflow }} on ${{ github.ref_name }}",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": ":white_check_mark: *Build Succeeded: ${{ github.workflow }}*"
+                  }
+                },
+                {
+                  "type": "context",
+                  "elements": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "Repository: <${{ github.server_url }}/${{ github.repository }}|${{ github.repository }}>"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "Branch: `${{ github.ref_name }}`"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "Commit: `${{ github.sha }}`"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "Workflow Run: <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|#${{ github.run_number }}>"
+                    }
+                  ]
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      - name: Send Slack Failure Notification
+        if: ${{ needs.test.result == 'failure' }} # S'exécute uniquement si le job 'test' a échoué
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          payload: |
+            {
+              "text": ":x: Build Failed: ${{ github.workflow }} on ${{ github.ref_name }}",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": ":x: *Build Failed: ${{ github.workflow }}*"
+                  }
+                },
+                {
+                  "type": "context",
+                  "elements": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "Repository: <${{ github.server_url }}/${{ github.repository }}|${{ github.repository }}>"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "Branch: `${{ github.ref_name }}`"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "Commit: `${{ github.sha }}`"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "Workflow Run: <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|#${{ github.run_number }}>"
+                    }
+                  ]
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      # --- Email Notifications ---
+      - name: Send Email Success Notification
+        if: ${{ needs.test.result == 'success' }} # S'exécute uniquement si le job 'test' a réussi
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.example.com # REMPLACEZ PAR L'ADRESSE DE VOTRE SERVEUR SMTP
+          server_port: 587 # REMPLACEZ PAR LE PORT DE VOTRE SERVEUR SMTP (souvent 587 ou 465)
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: "CI Build Succeeded: ${{ github.workflow }} on ${{ github.ref_name }}"
+          body: |
+            Le build a réussi pour le workflow "${{ github.workflow }}" sur la branche "${{ github.ref_name }}".
+
+            Dépôt: ${{ github.server_url }}/${{ github.repository }}
+            Commit: ${{ github.sha }}
+            Lien vers l'exécution du workflow: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            Félicitations !
+          to: votre-email@example.com # REMPLACEZ PAR L'ADRESSE E-MAIL DU DESTINATAIRE
+          from: github-actions@votre-domaine.com # REMPLACEZ PAR L'ADRESSE E-MAIL DE L'EXPÉDITEUR
+          secure: true # Utilisez 'true' pour TLS/SSL (port 587 ou 465), 'false' sinon
+
+      - name: Send Email Failure Notification
+        if: ${{ needs.test.result == 'failure' }} # S'exécute uniquement si le job 'test' a échoué
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.example.com # REMPLACEZ PAR L'ADRESSE DE VOTRE SERVEUR SMTP
+          server_port: 587 # REMPLACEZ PAR LE PORT DE VOTRE SERVEUR SMTP (souvent 587 ou 465)
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: "CI Build Failed: ${{ github.workflow }} on ${{ github.ref_name }}"
+          body: |
+            Le build a échoué pour le workflow "${{ github.workflow }}" sur la branche "${{ github.ref_name }}".
+
+            Dépôt: ${{ github.server_url }}/${{ github.repository }}
+            Commit: ${{ github.sha }}
+            Lien vers l'exécution du workflow: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            Veuillez vérifier les logs pour plus de détails.
+          to: votre-email@example.com # REMPLACEZ PAR L'ADRESSE E-MAIL DU DESTINATAIRE
+          from: github-actions@votre-domaine.com # REMPLACEZ PAR L'ADRESSE E-MAIL DE L'EXPÉDITEUR
+          secure: true # Utilisez 'true' pour TLS/SSL (port 587 ou 465), 'false' sinon
